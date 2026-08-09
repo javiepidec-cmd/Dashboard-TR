@@ -150,11 +150,11 @@ html, body { height: 100%; font-family: 'Barlow', sans-serif; background: var(--
 
 /* ── TOPBAR ── */
 #topbar {
-  height: var(--header-h);
+  min-height: var(--header-h);      /* antes: height. Ahora crece si los filtros wrappean */
   background: var(--gris-card);
   border-bottom: 1px solid var(--gris-border);
   display: flex; align-items: center;
-  padding: 0 20px;
+  padding: 6px 20px;                /* padding vertical para que respire cuando crece */
   gap: 12px;
   flex-shrink: 0;
   box-shadow: 0 1px 4px rgba(0,0,0,.06);
@@ -180,7 +180,8 @@ html, body { height: 100%; font-family: 'Barlow', sans-serif; background: var(--
   border: 1px solid var(--gris-border);
   border-radius: 6px;
   overflow: hidden;
-  min-width: 96px;
+  min-width: max-content;   /* la pill se adapta al label más largo */
+  flex-shrink: 0;           /* que el flex no las comprima; si sobra, aparece scroll horizontal */
   box-shadow: var(--shadow);
 }
 .kpi-pill .kpi-label {
@@ -188,6 +189,7 @@ html, body { height: 100%; font-family: 'Barlow', sans-serif; background: var(--
   text-transform: uppercase; color: #fff; line-height: 1;
   background: var(--amarillo);
   padding: 5px 12px;
+  white-space: nowrap;      /* evita que "TOTAL V. APLICADAS" o "ÍNDICE DE COBERTURA" se rompan */
 }
 .kpi-pill .kpi-value {
   font-family: 'Barlow Semi Condensed', sans-serif;
@@ -210,21 +212,32 @@ html, body { height: 100%; font-family: 'Barlow', sans-serif; background: var(--
 /* Contenedor dinámico de KPIs — se adapta a N pills */
 .topbar-kpis {
   display: flex; gap: 8px;
-  flex-wrap: nowrap;
-  overflow-x: auto;
-  scrollbar-width: thin;
+  flex-wrap: wrap;                  /* si no entran, se apilan en varias filas
+                                       dentro de su zona (mismo criterio que los
+                                       filtros); el topbar crece con min-height. */
+  row-gap: 6px;
   min-width: 0;
+  /* Toma la misma proporción que el mapa en el grid de abajo (1.1fr)
+     para que los KPIs no invadan la zona de filtros en pantallas chicas */
+  flex: 1.1 1 0;
 }
-.topbar-kpis::-webkit-scrollbar { height: 3px; }
-.topbar-kpis::-webkit-scrollbar-thumb { background: var(--gris-border); border-radius: 3px; }
-
 .topbar-divider { width: 1px; height: 32px; background: var(--gris-border); margin: 0 4px; }
 
-.topbar-spacer { flex: 1; }
+/* Ya no se usa: reemplazado por el flex proporcional de topbar-kpis + filter-group.
+   Se deja como no-op por compatibilidad con el HTML existente. */
+.topbar-spacer { display: none; }
 
 /* Filtros */
 .filter-group {
   display: flex; align-items: center; gap: 8px;
+  /* Toma la misma proporción que la tabla en el grid de abajo (0.9fr).
+     Si los filtros no entran, wrappean dentro de esta zona en vez de
+     invadir los KPIs. Se alinean a la derecha para respetar el mockup. */
+  flex: 0.9 1 0;
+  min-width: 0;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 6px;
 }
 .filter-item {
   display: flex; flex-direction: column;
@@ -2524,6 +2537,27 @@ function flyToFilter() {
 
   // 1) Si hay municipio activo: zoom a sus bounds
   if (muni) {
+    // Prioridad 1: bounds REAL del polígono del muni en la capa muniLayer.
+    // Se adapta al tamaño del muni (Riachuelo chico → zoom cerrado;
+    // Ituzaingó grande → zoom más abierto). Sin maxZoom para no cortar
+    // el polígono en munis chicos.
+    if (muniLayer) {
+      let matchLayer = null;
+      muniLayer.eachLayer(l => {
+        const p = l.feature?.properties || {};
+        const nombre = p.NOMB_MUNI || p.name || '';
+        if (!matchLayer && normGeo(nombre) === normGeo(muni)) {
+          matchLayer = l;
+        }
+      });
+      if (matchLayer) {
+        mapInstance.flyToBounds(matchLayer.getBounds(), {padding:[30,30], duration:1.2});
+        return;
+      }
+    }
+
+    // Prioridad 2 (fallback): bounds de los BARRIOS cargados en GEOJSON_BOUNDS
+    // (solo aplica a los ~13 munis con GeoJSON de barrios embebido)
     const key = Object.keys(window.GEOJSON_BOUNDS || {}).find(k =>
       normGeo(k.replace(/_/g,' ')) === normGeo(muni)
     );
@@ -2532,9 +2566,11 @@ function flyToFilter() {
       mapInstance.flyToBounds([b.sw, b.ne], {padding:[30,30], duration:1.2, maxZoom:15});
       return;
     }
-    // Fallback: centroide del KML de municipios
+    // Prioridad 3 (fallback): centroide del KML de municipios.
+    // Subimos el zoom de 8 → 11 para que el municipio ocupe una porción
+    // razonable del mapa (zoom 8 mostraba casi toda la provincia).
     const found = Object.entries(MUNI_CENTS).find(([k]) => k.split('||')[1] === normGeo(muni));
-    if (found) { mapInstance.flyTo(found[1], 8, {duration:1.2}); return; }
+    if (found) { mapInstance.flyTo(found[1], 11, {duration:1.2}); return; }
   }
 
   // 2) Si hay departamento activo: zoom al centroide del departamento
@@ -2650,7 +2686,12 @@ async function renderMuniLayer(conteoPorMuni, getColor, opts = {}) {
   }
 }
 
-window.addEventListener('load', loadData);
+// Al iniciar llamamos switchBase(CURRENT_BASE) en vez de loadData() directo,
+// así se sincronizan también el título y los filtros condicionales (Trimestre,
+// Especie, Tipo Antip.) desde la primera carga. Antes el HTML mostraba el título
+// "Distribución Espacial" hardcodeado y los filtros ocultos hasta el primer clic
+// en el sidebar.
+window.addEventListener('load', () => switchBase(CURRENT_BASE));
 
 // Recalcular el mapa al rotar el dispositivo o cambiar el tamaño de ventana
 window.addEventListener('resize', () => {
