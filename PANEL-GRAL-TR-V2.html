@@ -324,6 +324,9 @@ html, body { height: 100%; font-family: 'Barlow', sans-serif; background: var(--
 ═══════════════════════════════════════════════ */
 #mapa-container { height: 520px; width: 100%; border-radius: 0 0 var(--radius) var(--radius); }
 #mapa { height: 100%; width: 100%; }
+/* Filtro sobre el mapa base (tiles) para atenuarlo estilo Positron.
+   Afecta solo al pane de tiles: los polígonos y puntos mantienen sus colores originales. */
+#mapa .leaflet-tile-pane { filter: grayscale(0.85) brightness(1.05) contrast(0.9); }
 
 /* ═══════════════════════════════════════════════
    TABLA SEMÁFORO
@@ -2042,8 +2045,10 @@ async function renderMapa() {
   if (!mapInstance) {
     mapInstance = L.map('mapa', { zoomControl: true, attributionControl: false });
 
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
-      maxZoom: 18
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      subdomains: 'abc',
+      attribution: '&copy; OpenStreetMap contributors'
     }).addTo(mapInstance);
 
     // Encuadre inicial: toda la provincia de Corrientes
